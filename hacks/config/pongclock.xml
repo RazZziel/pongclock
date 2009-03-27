@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+
+<screensaver name="pongclock" _label="PongClock">
+
+  <command arg="-root"/>
+
+  <number id="density" type="slider" arg="-density %"
+          _label="Glyph Density" _low-label="Sparse" _high-label="Dense"
+          low="0" high="100" default="20"/>
+
+  <number id="speed" type="slider" arg="-speed %"
+          _label="Glyph Speed" _low-label="Slow" _high-label="Fast"
+          low="0.1" high="8.0" default="1.0"/>
+
+  <number id="delay" type="slider" arg="-delay %"
+          _label="Animation Speed" _low-label="Slow" _high-label="Fast"
+          low="0" high="50000" default="30000"
+          convert="invert"/>
+
+  <select id="mode">
+    <option id="matrix" _label="Matrix Encoding"/>
+    <option id="binary" _label="Binary Encoding"      arg-set="-mode binary"/>
+    <option id="hex"    _label="Hexadecimal Encoding" arg-set="-mode hex"/>
+    <option id="dna"    _label="Genetic Encoding"     arg-set="-mode dna"/>
+  </select>
+
+  <hgroup>
+   <boolean id="fog"    _label="Fog"     arg-unset="-no-fog"/>
+   <boolean id="waves"  _label="Waves"   arg-unset="-no-waves"/>
+   <boolean id="rotate" _label="Panning" arg-unset="-no-rotate"/>
+  </hgroup>
+
+  <hgroup>
+   <boolean id="tex"     _label="Textured"  arg-unset="-no-texture"/>
+   <boolean id="wire"    _label="Wireframe"   arg-set="-wireframe"/>
+   <boolean id="showfps" _label="Show Frames-per-Second" arg-set="-fps"/>
+  </hgroup>
+
+  <_description>
+	While this game of Pong ® randomly plays, the so called players score the time.
+	The left player scores the hours, and the right player scores the minutes
+
+	Written by Ismael Barros (RazZziel); 2007.
+  </_description>
+</screensaver>
