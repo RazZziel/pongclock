@@ -11,12 +11,13 @@
 
 #define DEF_COLOR      "#00FFCC"
 
-#define DEFAULTS "*delay:30000       \n"				\
-    "*count:        30          \n"                                     \
-    "*showFPS:      False       \n"                                     \
-    ".foreground: " DEF_COLOR "\n"                                      \
+#define DEFAULTS                                \
+    "*delay:        30000       \n"             \
+    "*count:        30          \n"             \
+    "*showFPS:      False       \n"             \
+    ".foreground: " DEF_COLOR  "\n"             \
 
-
+#define GL_GLEXT_PROTOTYPES
 #include "xlockmore.h"
 
 #include <stdlib.h>
@@ -25,12 +26,13 @@
 #include <math.h>
 #include <time.h>
 
-
-
 #ifdef USE_GL /* whole file */
 
-#define pong_font_width 59
+#define pong_font_width  59
 #define pong_font_height 5
+#define pong_char_height pong_font_height
+#define pong_char_width  (pong_font_width/10)
+#define pong_char_offset (pong_char_width+1)
 static unsigned char pong_font_bits[] = {
     0x1f, 0xf6, 0x7d, 0xdb, 0xf7, 0x7d, 0xdf, 0x07, 0x1b, 0x86, 0x61, 0xdb,
     0x30, 0x60, 0xdb, 0x06, 0x1b, 0xf6, 0x7d, 0xdf, 0xf7, 0x61, 0xdf, 0x07,
@@ -41,10 +43,22 @@ static unsigned char pong_font_bits[] = {
 #define refresh_pong 0
 #define release_pong 0
 
-#define countof(x) (sizeof((x))/sizeof((*x)))
-#define max(a, b) a < b ? b : a
-#define min(a, b) a > b ? b : a
+#define countof(x) (sizeof(x)/sizeof(*(x)))
 
+
+#define DRAW_TEXT_
+
+typedef struct {
+    GLint   x;
+    GLint   y;
+    GLsizei width;
+    GLsizei height;
+    GLuint  fbo;
+    GLuint  depth;
+    GLuint  texture;
+    GLfloat modelview[16];
+    GLfloat projection[16];
+} surface_t;
 
 typedef struct {
     GLXContext *glx_context;
@@ -57,6 +71,8 @@ typedef struct {
         ball_v, stick_v;
 
     GLuint textures[10];
+    surface_t window_surface;
+    surface_t surfaces[5];
 
     Bool button_down_p;
 
@@ -76,25 +92,22 @@ typedef struct {
 
 static pong_configuration *pps = NULL;
 
-static Bool do_spin;
-static GLfloat speed;
-static Bool do_wander;
+
+static Bool do_fbo;
 
 static XrmOptionDescRec opts[] = {
-    { "-spin",   ".spin",   XrmoptionNoArg, "True" },
-    { "+spin",   ".spin",   XrmoptionNoArg, "False" },
-    { "-speed",  ".speed",  XrmoptionSepArg, 0 },
-    { "-wander", ".wander", XrmoptionNoArg, "True" },
-    { "+wander", ".wander", XrmoptionNoArg, "False" }
+    { "-fbo", ".fbo", XrmoptionNoArg, "True" },
+    { "+fbo", ".fbo", XrmoptionNoArg, "False" }
 };
 
-#define DEF_SPIN        "True"
-#define DEF_WANDER      "True"
-#define DEF_SPEED       "0.05"
+#if 1
+#define DEF_FBO "True"
+#else
+#define DEF_FBO "False"
+#endif
+
 static argtype vars[] = {
-    {&do_spin,   "spin",   "Spin",   DEF_SPIN,   t_Bool},
-    {&do_wander, "wander", "Wander", DEF_WANDER, t_Bool},
-    {&speed,     "speed",  "Speed",  DEF_SPEED,  t_Float},
+    { &do_fbo, "fbo", "FBO", DEF_FBO, t_Bool }
 };
 
 ENTRYPOINT ModeSpecOpt pong_opts = {countof(opts), opts, countof(vars), vars, NULL};
@@ -109,27 +122,27 @@ static void draw_background(ModeInfo *mi)
 
     glBegin(GL_QUADS);
     {
-        glVertex2f(0.0f,          0.0f);
-        glVertex2f(MI_WIDTH (mi), 0.0f);
-        glVertex2f(MI_WIDTH (mi), pp->wall_h);
-        glVertex2f(0.0f,          pp->wall_h);
+        glVertex2f( 0.0f,         0.0f );
+        glVertex2f( MI_WIDTH(mi), 0.0f );
+        glVertex2f( MI_WIDTH(mi), pp->wall_h );
+        glVertex2f( 0.0f,         pp->wall_h );
 
-        glVertex2f(0.0f,          MI_HEIGHT(mi) - pp->wall_h);
-        glVertex2f(MI_WIDTH (mi), MI_HEIGHT(mi) - pp->wall_h);
-        glVertex2f(MI_WIDTH (mi), MI_HEIGHT(mi));
-        glVertex2f(0.0f,          MI_HEIGHT(mi));
+        glVertex2f( 0.0f,         MI_HEIGHT(mi) - pp->wall_h );
+        glVertex2f( MI_WIDTH(mi), MI_HEIGHT(mi) - pp->wall_h );
+        glVertex2f( MI_WIDTH(mi), MI_HEIGHT(mi) );
+        glVertex2f( 0.0f,         MI_HEIGHT(mi) );
     }
     glEnd();
 
     /* Net */
-    for (i=0; i < MI_HEIGHT (mi); i+=5*pp->net_h)
+    for (i=0; i < MI_HEIGHT(mi); i+=5*pp->net_h)
     {
         glBegin(GL_QUADS);
         {
-            glVertex2f(MI_WIDTH (mi)/2 - pp->net_w, i);
-            glVertex2f(MI_WIDTH (mi)/2 + pp->net_w, i);
-            glVertex2f(MI_WIDTH (mi)/2 + pp->net_w, i + pp->net_h);
-            glVertex2f(MI_WIDTH (mi)/2 - pp->net_w, i + pp->net_h);
+            glVertex2f( MI_WIDTH(mi)/2 - pp->net_w, i );
+            glVertex2f( MI_WIDTH(mi)/2 + pp->net_w, i );
+            glVertex2f( MI_WIDTH(mi)/2 + pp->net_w, i + pp->net_h );
+            glVertex2f( MI_WIDTH(mi)/2 - pp->net_w, i + pp->net_h );
         }
         glEnd();
     }
@@ -204,8 +217,8 @@ static void reset_ball(ModeInfo *mi, int direction)
 {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
 
-    pp->ball.x = MI_WIDTH (mi)/2;
-    pp->ball.y = MI_WIDTH (mi)/2;
+    pp->ball.x = MI_WIDTH(mi)/2;
+    pp->ball.y = MI_HEIGHT(mi)/2;
     pp->ball.vx = direction * sqrtf(pp->ball_v * pp->ball_v / 2);
     pp->ball.vy = pp->ball.vx;
 }
@@ -234,7 +247,7 @@ static void draw_ball(ModeInfo *mi)
         reset_ball(mi, 1);
     }
 
-    if (((pp->ball.y + pp->ball_r) > (MI_HEIGHT (mi) - pp->wall_h)) ||
+    if (((pp->ball.y + pp->ball_r) > (MI_HEIGHT(mi) - pp->wall_h)) ||
         ((pp->ball.y - pp->ball_r) < pp->wall_h))
     {
         pp->ball.vy = -pp->ball.vy;
@@ -266,11 +279,10 @@ static void get_time(int *h, int *m)
 static void load_fonts(ModeInfo *mi)
 {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
-    int char_width=5;
     int i, j, ch, offset;
     char font_byte, font_bit;
 
-    unsigned char *bits = malloc(char_width*pong_font_height);
+    unsigned char *bits = malloc(pong_char_width * pong_char_height);
 
 
     /* setup parameters for texturing */
@@ -279,46 +291,113 @@ static void load_fonts(ModeInfo *mi)
 
     for (ch=0; ch<10; ch++)
     {
-        /* Transform bitmap into  */
-        for (j=0; j<pong_font_height; j++)
+        /* Transform bitmap into texture */
+        for (j=0; j<pong_char_height; j++)
         {
-            for (i=0; i<char_width; i++)
+            for (i=0; i<pong_char_width; i++)
             {
                 offset = (((pong_font_width/4)+2)*4)*j + (ch*6)+i;
                 font_byte = pong_font_bits[offset/8];
                 font_bit = font_byte >> (offset%8) & 0x1;
-                bits[char_width*j+i] = font_bit * 255;
+                bits[pong_char_width*j+i] = font_bit * 255;
             }
         }
         /* Texture */
         glBindTexture(GL_TEXTURE_2D, pp->textures[ch]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE8,
+                     pong_char_width, pong_char_height,
+                     0, GL_LUMINANCE, GL_UNSIGNED_BYTE, bits);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE8, char_width, pong_font_height, 0,
-                     GL_LUMINANCE, GL_UNSIGNED_BYTE, bits);
     }
 }
 
-static void draw_number(ModeInfo *mi, int number)
+static void create_surface(surface_t *surface, Bool depth,
+                           int x, int y,
+                           int width, int height)
 {
-    pong_configuration *pp = &pps[MI_SCREEN(mi)];
-    int i;
+    GLenum status;
 
-    for (i=10; i!=0; i/=10)
+    surface->x = x;
+    surface->y = y;
+    surface->width = width;
+    surface->height = height;
+    glGetFloatv(GL_MODELVIEW_MATRIX, surface->modelview);
+    glGetFloatv(GL_MODELVIEW_MATRIX, surface->projection);
+
+    /* FBO */
+    glGenFramebuffersEXT(1, &surface->fbo);
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, surface->fbo);
+
+    if (depth)
     {
-        glBindTexture(GL_TEXTURE_2D, pp->textures[number/i%(i*10)]);
-        glBegin(GL_QUADS);
-        {
-            glTexCoord2f(0.0f, 1.0f); glVertex2f(0, 0);
-            glTexCoord2f(1.0f, 1.0f); glVertex2f(5, 0);
-            glTexCoord2f(1.0f, 0.0f); glVertex2f(5, 5);
-            glTexCoord2f(0.0f, 0.0f); glVertex2f(0, 5);
-        }
-        glEnd();
-        glTranslatef(6, 0, 0);
+        /* Depth render buffer */
+        glGenRenderbuffersEXT(1, &surface->depth);
+        glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, surface->depth);
+        glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT,
+                                 width, height);
     }
+    else
+    {
+        surface->depth = 0;
+    }
+
+    /* Texture */
+    glGenTextures(1, &surface->texture);
+    glBindTexture(GL_TEXTURE_2D, surface->texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                 width, height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    /* Attach texture to FBO */
+    glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT,
+                              GL_COLOR_ATTACHMENT0_EXT,
+                              GL_TEXTURE_2D, surface->texture, 0);
+
+    if (depth)
+    {
+        /* Attach render buffer to FBO */
+        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+                                     GL_DEPTH_ATTACHMENT_EXT,
+                                     GL_RENDERBUFFER_EXT,
+                                     surface->depth);
+    }
+
+    status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+    if (status != GL_FRAMEBUFFER_COMPLETE_EXT)
+    {
+        fprintf(stderr, "Couldn't set up framebuffer: 0x%x\n", status);
+        exit(1);
+    }
+
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
 }
 
+static void bind_surface(surface_t *surface)
+{
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, surface->fbo);
+
+    glViewport(surface->x, surface->y,
+               surface->width, surface->height);
+
+    /* glMatrixMode(GL_PROJECTION); */
+    /* glLoadMatrixf(surface->projection); */
+
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(surface->modelview);
+
+    /* Clear */
+    glClearColor(0.0f, 0.0f, 0.0f, 0.5f);
+    glClear(GL_COLOR_BUFFER_BIT | (surface->depth ? GL_DEPTH_BUFFER_BIT : 0));
+    glLoadIdentity();
+}
+
+
+#if defined(DRAW_TEXT)
 static void draw_text(ModeInfo *mi, char *text)
 {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
@@ -330,24 +409,46 @@ static void draw_text(ModeInfo *mi, char *text)
             glBindTexture(GL_TEXTURE_2D, pp->textures[(int)(*text-48)]);
             glBegin(GL_QUADS);
             {
-                glTexCoord2f(0.0f, 1.0f); glVertex2f(0, 0);
-                glTexCoord2f(1.0f, 1.0f); glVertex2f(5, 0);
-                glTexCoord2f(1.0f, 0.0f); glVertex2f(5, 5);
-                glTexCoord2f(0.0f, 0.0f); glVertex2f(0, 5);
+                glTexCoord2f(0.0f, 1.0f); glVertex2f(0,               0);
+                glTexCoord2f(1.0f, 1.0f); glVertex2f(pong_char_width, 0);
+                glTexCoord2f(1.0f, 0.0f); glVertex2f(pong_char_width, pong_char_width);
+                glTexCoord2f(0.0f, 0.0f); glVertex2f(0,               pong_char_width);
             }
             glEnd();
         }
-        glTranslatef(6, 0, 0);
+        glTranslatef(pong_char_offset, 0, 0);
     }
     while(*(++text));
 }
+#else
+static void draw_number(ModeInfo *mi, int number)
+{
+    pong_configuration *pp = &pps[MI_SCREEN(mi)];
+    int i;
+
+    for (i=10; i!=0; i/=10)
+    {
+        glBindTexture(GL_TEXTURE_2D, pp->textures[number/i%(i*10)]);
+        glBegin(GL_QUADS);
+        {
+            glTexCoord2f(0.0f, 1.0f); glVertex2f(0,               0);
+            glTexCoord2f(1.0f, 1.0f); glVertex2f(pong_char_width, 0);
+            glTexCoord2f(1.0f, 0.0f); glVertex2f(pong_char_width, pong_char_width);
+            glTexCoord2f(0.0f, 0.0f); glVertex2f(0,               pong_char_width);
+        }
+        glEnd();
+        glTranslatef(pong_char_offset, 0, 0);
+    }
+}
+#endif
 
 static void draw_score(ModeInfo *mi)
 {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
 
     int h, m;
-    int scale = MI_WIDTH(mi)/100.0f;
+    int scale_x = MI_WIDTH(mi)/100.0f,
+        scale_y = MI_HEIGHT(mi)/80.0f;
 
     get_time(&h, &m);
     if (pp->stick_r.score != m)
@@ -358,30 +459,27 @@ static void draw_score(ModeInfo *mi)
             pp->stick_l.must_lose = True;
     }
 
-#if 0
-    glPushMatrix();
-    {
-        char sp[8];
-        sprintf(sp, "%02d  %02d", pp->stick_l.score, pp->stick_r.score);
-        glTranslatef((MI_WIDTH(mi)-(strlen(sp)+1)*5*scale)/2, MI_HEIGHT(mi)*17/20, 0);
-        glScalef(scale, scale, 0);
-        draw_text(mi, sp);
-    }
-    glPopMatrix();
-#else
     glPushMatrix();
     {
         glTranslatef(MI_WIDTH(mi)/2, MI_HEIGHT(mi), 0);
-        glScalef(scale, scale, 0);
+        glScalef(scale_x, scale_y, 0);
 
-        glTranslatef(-3*scale, -2*scale, 0);
+#if defined(DRAW_TEXT)
+        {
+            char sp[8];
+            sprintf(sp, "%02d  %02d", pp->stick_l.score, pp->stick_r.score);
+            glTranslatef(-(int)strlen(sp)/2*pong_char_offset, -2*pong_char_offset, 0);
+            draw_text(mi, sp);
+        }
+#else
+        glTranslatef(-3*pong_char_offset, -2*pong_char_offset, 0);
         draw_number(mi, pp->stick_l.score);
 
-        glTranslatef(2*scale, 0, 0);
+        glTranslatef(2*pong_char_offset, 0, 0);
         draw_number(mi, pp->stick_r.score);
+#endif
     }
     glPopMatrix();
-#endif
 }
 
 
@@ -393,14 +491,22 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
 
     if (!pp->glx_context)
         return;
-
     glXMakeCurrent(MI_DISPLAY(mi), MI_WINDOW(mi), *(pp->glx_context));
 
-    glClear(GL_COLOR_BUFFER_BIT);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glColor3f(1,1,1);
+    if (do_fbo)
+    {
+        bind_surface(&pp->surfaces[0]);
+    }
+    else
+    {
+        glClearColor(0.0f, 0.0f, 0.0f, 0.5f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glLoadIdentity();
+    }
 
-    glLoadIdentity();
+    /* Draw scene */
+
+    glColor3f(1.0f, 1.0f, 1.0f);
 
     draw_background(mi);
 
@@ -409,7 +515,8 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
     draw_ball(mi);
     draw_score(mi);
 
-    glColor3f(0,0,0);
+    glColor3f(0.0f, 0.0f, 0.0f);
+
     if (mi->fps_p)
     {
         glBegin(GL_QUADS);
@@ -422,8 +529,54 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
         glEnd();
         do_fps(mi);
     }
-    glFinish();
 
+    if (do_fbo)
+    {
+        int i;
+
+        /* Downsample */
+        glEnable(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, pp->surfaces[0].texture);
+
+        for (i=1; i<countof(pp->surfaces); i++)
+        {
+            bind_surface(&pp->surfaces[i]);
+            glBegin(GL_QUADS);
+            {
+                glTexCoord2i(0, 0); glVertex2i(-1, -1);
+                glTexCoord2i(1, 0); glVertex2i( 1, -1);
+                glTexCoord2i(1, 1); glVertex2i( 1,  1);
+                glTexCoord2i(0, 1); glVertex2i(-1,  1);
+            }
+            glEnd();
+        }
+
+        /* Draw scene */
+        bind_surface(&pp->window_surface);
+
+        glColor4f(1.0f,1.0f,1.0f,1.0f);
+
+        glPushMatrix();
+        for (i=0; i<countof(pp->surfaces); i++)
+        {
+            glBindTexture(GL_TEXTURE_2D, pp->surfaces[i].texture);
+            glBegin(GL_QUADS);
+            {
+                glNormal3f( 0.0f, 0.0f, 1.0 );
+                glTexCoord2i(0, 0); glVertex2i( 0,                     0 );
+                glTexCoord2i(1, 0); glVertex2i( pp->surfaces[i].width, 0 );
+                glTexCoord2i(1, 1); glVertex2i( pp->surfaces[i].width, pp->surfaces[i].height );
+                glTexCoord2i(0, 1); glVertex2i( 0,                     pp->surfaces[i].height );
+            }
+            glEnd();
+            /* glTranslatef(0, pp->surfaces[0].height + 1, 0); */
+        }
+        glPopMatrix();
+
+        glDisable(GL_TEXTURE_2D);
+    }
+
+    glFinish();
     glXSwapBuffers(dpy, window);
 }
 
@@ -434,25 +587,54 @@ ENTRYPOINT void reshape_pong(ModeInfo *mi, int width, int height)
     /* Recalculate size of elements so they're always
        proportional to the windows size */
 
-    pp->net_w   = MI_WIDTH (mi)/162.0f;
-    pp->net_h   = MI_HEIGHT (mi)/512.0f;
-    pp->wall_h  = MI_HEIGHT (mi)/32.0f;
+    pp->net_w   = MI_WIDTH(mi)/162.0f;
+    pp->net_h   = MI_HEIGHT(mi)/512.0f;
+    pp->wall_h  = MI_HEIGHT(mi)/32.0f;
 
-    pp->ball_r  = MI_WIDTH (mi)/128.0f;
+    pp->ball_r  = MI_WIDTH(mi)/128.0f;
     pp->ball_v  = MI_HEIGHT(mi)/32.0f;
 
     reset_ball(mi, 1);
 
-    pp->stick_w = MI_WIDTH (mi)/74.0f;
-    pp->stick_h = MI_HEIGHT (mi)/11.0f;
+    pp->stick_w = MI_WIDTH(mi)/74.0f;
+    pp->stick_h = MI_HEIGHT(mi)/11.0f;
     pp->stick_v = MI_HEIGHT(mi)/32.0f;
-    pp->stick_range_lose = MI_WIDTH (mi)/8;
+    pp->stick_range_lose = MI_WIDTH(mi)/8;
     pp->stick_range_normal =  MI_WIDTH(mi)/3;
 
-    pp->stick_l.y = MI_HEIGHT (mi) / 2;
+    pp->stick_l.y = MI_HEIGHT(mi) / 2;
     pp->stick_l.x = pp->stick_w;
-    pp->stick_r.y = MI_HEIGHT (mi) / 2;
-    pp->stick_r.x = MI_WIDTH (mi) - pp->stick_w;
+    pp->stick_r.y = MI_HEIGHT(mi) / 2;
+    pp->stick_r.x = MI_WIDTH(mi) - pp->stick_w;
+
+
+    if (do_fbo)
+    {
+        int i;
+
+        /* Window surface */
+        memset( &pp->window_surface, 0, sizeof(pp->window_surface) );
+        pp->window_surface.width = MI_WIDTH(mi);
+        pp->window_surface.height = MI_HEIGHT(mi);
+        glLoadIdentity();
+
+        glGetFloatv(GL_MODELVIEW_MATRIX, pp->window_surface.modelview);
+        glOrtho(0, MI_WIDTH(mi), MI_HEIGHT(mi), 0, 0, 10);
+        glGetFloatv(GL_MODELVIEW_MATRIX, pp->window_surface.projection);
+        glLoadIdentity();
+
+        /* FBOs */
+        create_surface(&pp->surfaces[0], True,
+                       0, 0,
+                       MI_WIDTH(mi), MI_HEIGHT(mi));
+        for (i=1; i<countof(pp->surfaces); i++)
+        {
+            create_surface(&pp->surfaces[i], False,
+                           0, 0,
+                           MI_WIDTH(mi) >> i,
+                           MI_HEIGHT(mi) >> i);
+        }
+    }
 
     /* Recalculate prespective */
 
@@ -460,13 +642,14 @@ ENTRYPOINT void reshape_pong(ModeInfo *mi, int width, int height)
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
 
-    glOrtho(0.0f, MI_WIDTH (mi), 0.0f, MI_HEIGHT (mi), 0.0, -0.1);
+    glOrtho(0.0f, MI_WIDTH(mi), 0.0f, MI_HEIGHT(mi), 0.0, -1.0);
 
     glMatrixMode(GL_MODELVIEW);
+    /* glLoadIdentity(); */
 }
 
 
-ENTRYPOINT Bool pong_handle_event (ModeInfo *mi, XEvent *event) {
+ENTRYPOINT Bool pong_handle_event(ModeInfo *mi, XEvent *event) {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
 
     if (event->xany.type == ButtonPress &&
@@ -484,8 +667,6 @@ ENTRYPOINT Bool pong_handle_event (ModeInfo *mi, XEvent *event) {
 
     return False;
 }
-
-
 
 ENTRYPOINT void init_pong(ModeInfo *mi)
 {
@@ -506,6 +687,7 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
     pp = &pps[MI_SCREEN(mi)];
     pp->glx_context = init_GL(mi);
 
+
     glClearColor(0.0, 0.0, 0.0, 0.0);
     glShadeModel(GL_SMOOTH);
 
@@ -516,26 +698,32 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
 
     load_fonts(mi);
 
-    pp->stick_l.x            =  0.0f;
-    pp->stick_l.y            =  0.0f;
-    pp->stick_l.o            =  1.0f;
-    pp->stick_l.must_lose    =  False;
-    pp->stick_l.ball_reached =  0;
+    pp->stick_l.x            = 0.0f;
+    pp->stick_l.y            = 0.0f;
+    pp->stick_l.o            = 1.0f;
+    pp->stick_l.must_lose    = False;
+    pp->stick_l.ball_reached = 0;
 
-    pp->stick_r.x            =  pp->stick_l.x;
-    pp->stick_r.y            =  pp->stick_l.y;
+    pp->stick_r.x            = pp->stick_l.x;
+    pp->stick_r.y            = pp->stick_l.y;
     pp->stick_r.o            = -pp->stick_l.o;
-    pp->stick_l.must_lose    =  pp->stick_l.must_lose;
-    pp->stick_r.ball_reached =  pp->stick_l.ball_reached;
+    pp->stick_l.must_lose    = pp->stick_l.must_lose;
+    pp->stick_r.ball_reached = pp->stick_l.ball_reached;
 
     get_time(&pp->stick_l.score, &pp->stick_r.score);
 
-    pp->ball.x        = 0.0f;
-    pp->ball.y        = 0.0f;
-    pp->ball.vx       = 0.0f;
-    pp->ball.vy       = 0.0f;
+    pp->ball.x  = 0.0f;
+    pp->ball.y  = 0.0f;
+    pp->ball.vx = 0.0f;
+    pp->ball.vy = 0.0f;
 
 
+    if (do_fbo && !strstr( (char *) glGetString(GL_EXTENSIONS),
+                           "GL_EXT_framebuffer_object" ))
+    {
+        fprintf(stderr, "GL_EXT_framebuffer_object not supported, disabling post-processing\n");
+        do_fbo = False;
+    }
 
     reshape_pong( mi, MI_WIDTH(mi), MI_HEIGHT(mi) );
     reset_ball(mi, 1);
