@@ -65,7 +65,7 @@ typedef struct {
 
     GLfloat ball_r,
         stick_w, stick_h,
-        stick_range_normal, stick_range_lose,
+        normal_range, loser_range,
         net_w, net_h,
         wall_h,
         ball_v, stick_v;
@@ -157,17 +157,17 @@ static void draw_stick(ModeInfo *mi, struct s_stick *stick)
     /* If the ball is in this stick's side of the
      * screen and approaching, move the stick */
 
-    if (((stick->o * pp->ball.vx) < 0) &&  /* Ball is aproaching to the stick */
+    if (((stick->o * pp->ball.vx) < 0) &&                    /* Ball is aproaching the stick */
+        (!stick->must_lose || (fabsf(dif) > pp->stick_h)) && /* If the stick must lose, make sure it does */
         (fabsf(stick->x - pp->ball.x) < (stick->must_lose
-                                         ? pp->stick_range_lose       /* Range for a losing stick */
-                                         : pp->stick_range_normal)))  /* Range for a normal stick */
+                                         ? pp->loser_range       /* Range for a losing stick */
+                                         : pp->normal_range)))   /* Range for a normal stick */
     {
-
         /* 1. Accelerate until the ball is near the center
          * 2. Follow the ball at constant speed */
 
         if (((dif > 0.0f) &&
-             (MI_HEIGHT(mi) - pp->wall_h > stick->y + pp->stick_h)) ||
+             (stick->y + pp->stick_h < MI_HEIGHT(mi) - pp->wall_h)) ||
             ((dif < 0.0f) &&
              (stick->y - pp->stick_h > pp->wall_h)))
         {
@@ -178,10 +178,10 @@ static void draw_stick(ModeInfo *mi, struct s_stick *stick)
             /*stick->y += dif/(fabsf(dif))
              * logf(abs(dif/20.0)+1.0)
              * 1.2 * pp->stick_v;*/
-            if (stick->must_lose)
-                stick->y += sin(dif/160)*40;
-            else
-                stick->y += sin(dif/160)*160;
+
+            stick->y += ( sin(dif/MI_HEIGHT(mi)*M_PI/2.0f) *
+                          MI_HEIGHT(mi) /
+                          (stick->must_lose ? 10.0f : 5.0f ) );
 
             /*if (abs(dif) == 0.0f)
               stick->y += dif;
@@ -192,8 +192,7 @@ static void draw_stick(ModeInfo *mi, struct s_stick *stick)
         }
 
         /* Collision detection */
-        if ((((pp->ball.y > (stick->y - pp->stick_h)) &&
-              (pp->ball.y < (stick->y + pp->stick_h)))) &&
+        if ((fabsf(dif) <= pp->stick_h) &&
             ((stick->o * (pp->ball.x - (stick->o * pp->ball_r)))
              < (stick->o * (stick->x + (stick->o * pp->stick_w)))))
         {
@@ -234,7 +233,6 @@ static void draw_ball(ModeInfo *mi)
         /* Increment minutes */
         pp->stick_l.must_lose = False;
         if (++pp->stick_r.score == 60) pp->stick_r.score = 0;
-        printf(" %02d  - [%02d]", pp->stick_l.score, pp->stick_r.score);
         reset_ball(mi, -1);
     }
     else if ((pp->ball.x - pp->ball_r) > MI_WIDTH(mi))
@@ -243,7 +241,6 @@ static void draw_ball(ModeInfo *mi)
         /* Increment hours, reset minutes */
         if (++pp->stick_l.score == 24) pp->stick_l.score = 0;
         pp->stick_r.score = 0;
-        printf("[%02d] -  %02d ", pp->stick_l.score, pp->stick_r.score);
         reset_ball(mi, 1);
     }
 
@@ -314,7 +311,8 @@ static void load_fonts(ModeInfo *mi)
 
 static void create_surface(surface_t *surface, Bool depth,
                            int x, int y,
-                           int width, int height)
+                           int width, int height,
+                           GLenum filter)
 {
     GLenum status;
 
@@ -336,6 +334,12 @@ static void create_surface(surface_t *surface, Bool depth,
         glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, surface->depth);
         glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT,
                                  width, height);
+
+        /* Attach render buffer to FBO */
+        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
+                                     GL_DEPTH_ATTACHMENT_EXT,
+                                     GL_RENDERBUFFER_EXT,
+                                     surface->depth);
     }
     else
     {
@@ -348,24 +352,17 @@ static void create_surface(surface_t *surface, Bool depth,
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                  width, height,
                  0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    /* glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); */
+    /* glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); */
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
     /* Attach texture to FBO */
     glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT,
                               GL_COLOR_ATTACHMENT0_EXT,
                               GL_TEXTURE_2D, surface->texture, 0);
 
-    if (depth)
-    {
-        /* Attach render buffer to FBO */
-        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
-                                     GL_DEPTH_ATTACHMENT_EXT,
-                                     GL_RENDERBUFFER_EXT,
-                                     surface->depth);
-    }
 
     status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
     if (status != GL_FRAMEBUFFER_COMPLETE_EXT)
@@ -402,6 +399,7 @@ static void draw_text(ModeInfo *mi, char *text)
 {
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
 
+    glEnable(GL_TEXTURE_2D);
     do
     {
         if (*text != ' ')
@@ -419,6 +417,8 @@ static void draw_text(ModeInfo *mi, char *text)
         glTranslatef(pong_char_offset, 0, 0);
     }
     while(*(++text));
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
 }
 #else
 static void draw_number(ModeInfo *mi, int number)
@@ -426,6 +426,7 @@ static void draw_number(ModeInfo *mi, int number)
     pong_configuration *pp = &pps[MI_SCREEN(mi)];
     int i;
 
+    glEnable(GL_TEXTURE_2D);
     for (i=10; i!=0; i/=10)
     {
         glBindTexture(GL_TEXTURE_2D, pp->textures[number/i%(i*10)]);
@@ -439,6 +440,8 @@ static void draw_number(ModeInfo *mi, int number)
         glEnd();
         glTranslatef(pong_char_offset, 0, 0);
     }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glDisable(GL_TEXTURE_2D);
 }
 #endif
 
@@ -451,13 +454,8 @@ static void draw_score(ModeInfo *mi)
         scale_y = MI_HEIGHT(mi)/80.0f;
 
     get_time(&h, &m);
-    if (pp->stick_r.score != m)
-    {
-        if (pp->stick_l.score != h)
-            pp->stick_r.must_lose = True;
-        else
-            pp->stick_l.must_lose = True;
-    }
+    pp->stick_r.must_lose = (pp->stick_l.score != h);
+    pp->stick_l.must_lose = (pp->stick_r.score != m);
 
     glPushMatrix();
     {
@@ -551,18 +549,19 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
             glEnd();
         }
 
-        /* Draw scene */
+        /* Draw to screen */
         bind_surface(&pp->window_surface);
 
         glColor4f(1.0f,1.0f,1.0f,1.0f);
 
         glPushMatrix();
+#if 1
         for (i=0; i<countof(pp->surfaces); i++)
         {
             glBindTexture(GL_TEXTURE_2D, pp->surfaces[i].texture);
             glBegin(GL_QUADS);
             {
-                glNormal3f( 0.0f, 0.0f, 1.0 );
+                glNormal3i( 0, 0, 1 );
                 glTexCoord2i(0, 0); glVertex2i( 0,                     0 );
                 glTexCoord2i(1, 0); glVertex2i( pp->surfaces[i].width, 0 );
                 glTexCoord2i(1, 1); glVertex2i( pp->surfaces[i].width, pp->surfaces[i].height );
@@ -571,6 +570,52 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
             glEnd();
             /* glTranslatef(0, pp->surfaces[0].height + 1, 0); */
         }
+#else
+        glBindTexture(GL_TEXTURE_2D, pp->surfaces[0].texture);
+        glTranslatef(MI_WIDTH(mi)/2, MI_HEIGHT(mi)/2, 200.0f);
+        { static GLfloat i=0; glRotatef(30.0f+i++, 1.0f, 1.0f, 0.0f); }
+        glScalef(200.0f, 200.0f, 200.0f);
+        glBegin(GL_QUADS);
+        {
+            /* Front Face */
+            glColor4f(0.0f,0.5f,0.0f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i(-1, -1,  1);
+            glTexCoord2i(1, 0); glVertex3i( 1, -1,  1);
+            glTexCoord2i(1, 1); glVertex3i( 1,  1,  1);
+            glTexCoord2i(0, 1); glVertex3i(-1,  1,  1);
+            /* Back Face */
+            glColor4f(0.5f,0.0f,0.0f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i(-1, -1, -1);
+            glTexCoord2i(1, 0); glVertex3i(-1,  1, -1);
+            glTexCoord2i(1, 1); glVertex3i( 1,  1, -1);
+            glTexCoord2i(0, 1); glVertex3i( 1, -1, -1);
+            /* Top Face */
+            glColor4f(0.0f,0.0f,0.5f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i(-1,  1, -1);
+            glTexCoord2i(1, 0); glVertex3i(-1,  1,  1);
+            glTexCoord2i(1, 1); glVertex3i( 1,  1,  1);
+            glTexCoord2i(0, 1); glVertex3i( 1,  1, -1);
+            /* Bottom Face */
+            glColor4f(0.0f,0.5f,0.5f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i(-1, -1, -1);
+            glTexCoord2i(1, 0); glVertex3i( 1, -1, -1);
+            glTexCoord2i(1, 1); glVertex3i( 1, -1,  1);
+            glTexCoord2i(0, 1); glVertex3i(-1, -1,  1);
+            /* Right face */
+            glColor4f(0.5f,0.5f,0.0f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i( 1, -1, -1);
+            glTexCoord2i(1, 0); glVertex3i( 1,  1, -1);
+            glTexCoord2i(1, 1); glVertex3i( 1,  1,  1);
+            glTexCoord2i(0, 1); glVertex3i( 1, -1,  1);
+            /* Left Face */
+            glColor4f(0.5f,0.5f,0.5f,1.0f);
+            glTexCoord2i(0, 0); glVertex3i(-1, -1, -1);
+            glTexCoord2i(1, 0); glVertex3i(-1, -1,  1);
+            glTexCoord2i(1, 1); glVertex3i(-1,  1,  1);
+            glTexCoord2i(0, 1); glVertex3i(-1,  1, -1);
+        }
+        glEnd();
+#endif
         glPopMatrix();
 
         glDisable(GL_TEXTURE_2D);
@@ -587,20 +632,20 @@ ENTRYPOINT void reshape_pong(ModeInfo *mi, int width, int height)
     /* Recalculate size of elements so they're always
        proportional to the windows size */
 
-    pp->net_w   = MI_WIDTH(mi)/162.0f;
-    pp->net_h   = MI_HEIGHT(mi)/512.0f;
-    pp->wall_h  = MI_HEIGHT(mi)/32.0f;
+    pp->net_w  = MI_WIDTH(mi)/162.0f;
+    pp->net_h  = MI_HEIGHT(mi)/512.0f;
+    pp->wall_h = MI_HEIGHT(mi)/32.0f;
 
-    pp->ball_r  = MI_WIDTH(mi)/128.0f;
-    pp->ball_v  = MI_HEIGHT(mi)/32.0f;
+    pp->ball_r = MI_WIDTH(mi)/128.0f;
+    pp->ball_v = MI_HEIGHT(mi)/32.0f;
 
     reset_ball(mi, 1);
 
-    pp->stick_w = MI_WIDTH(mi)/74.0f;
-    pp->stick_h = MI_HEIGHT(mi)/11.0f;
-    pp->stick_v = MI_HEIGHT(mi)/32.0f;
-    pp->stick_range_lose = MI_WIDTH(mi)/8;
-    pp->stick_range_normal =  MI_WIDTH(mi)/3;
+    pp->stick_w      = MI_WIDTH(mi)/74.0f;
+    pp->stick_h      = MI_HEIGHT(mi)/11.0f;
+    pp->stick_v      = MI_HEIGHT(mi)/32.0f;
+    pp->loser_range  = MI_WIDTH(mi)/8;
+    pp->normal_range = MI_WIDTH(mi)/3;
 
     pp->stick_l.y = MI_HEIGHT(mi) / 2;
     pp->stick_l.x = pp->stick_w;
@@ -619,30 +664,33 @@ ENTRYPOINT void reshape_pong(ModeInfo *mi, int width, int height)
         glLoadIdentity();
 
         glGetFloatv(GL_MODELVIEW_MATRIX, pp->window_surface.modelview);
-        glOrtho(0, MI_WIDTH(mi), MI_HEIGHT(mi), 0, 0, 10);
+        /* glOrtho(0.0f, MI_WIDTH(mi), MI_HEIGHT(mi), 0, 0, -600.0f); */
         glGetFloatv(GL_MODELVIEW_MATRIX, pp->window_surface.projection);
         glLoadIdentity();
 
         /* FBOs */
         create_surface(&pp->surfaces[0], True,
                        0, 0,
-                       MI_WIDTH(mi), MI_HEIGHT(mi));
+                       MI_WIDTH(mi),
+                       MI_HEIGHT(mi),
+                       GL_LINEAR);
         for (i=1; i<countof(pp->surfaces); i++)
         {
             create_surface(&pp->surfaces[i], False,
                            0, 0,
                            MI_WIDTH(mi) >> i,
-                           MI_HEIGHT(mi) >> i);
+                           MI_HEIGHT(mi) >> i,
+                           GL_NEAREST);
         }
     }
 
     /* Recalculate prespective */
 
-    glViewport(0, 0, (GLint) width, (GLint) height);
+    glViewport(0, 0, MI_WIDTH(mi), MI_HEIGHT(mi));
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
 
-    glOrtho(0.0f, MI_WIDTH(mi), 0.0f, MI_HEIGHT(mi), 0.0, -1.0);
+    glOrtho(0.0f, MI_WIDTH(mi), 0.0f, MI_HEIGHT(mi), 0.0, -600.0f);
 
     glMatrixMode(GL_MODELVIEW);
     /* glLoadIdentity(); */
@@ -694,6 +742,7 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
     glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
     glEnable( GL_BLEND );
     glEnable( GL_ALPHA_TEST );
+    glEnable( GL_CULL_FACE );
     glEnable( GL_TEXTURE_2D );
 
     load_fonts(mi);
@@ -704,11 +753,8 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
     pp->stick_l.must_lose    = False;
     pp->stick_l.ball_reached = 0;
 
-    pp->stick_r.x            = pp->stick_l.x;
-    pp->stick_r.y            = pp->stick_l.y;
+    pp->stick_r              = pp->stick_l;
     pp->stick_r.o            = -pp->stick_l.o;
-    pp->stick_l.must_lose    = pp->stick_l.must_lose;
-    pp->stick_r.ball_reached = pp->stick_l.ball_reached;
 
     get_time(&pp->stick_l.score, &pp->stick_r.score);
 
@@ -726,9 +772,8 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
     }
 
     reshape_pong( mi, MI_WIDTH(mi), MI_HEIGHT(mi) );
-    reset_ball(mi, 1);
 }
 
-XSCREENSAVER_MODULE_2 ("Pong Clock", pongclock, pong)
+XSCREENSAVER_MODULE_2("Pong Clock", pongclock, pong)
 
 #endif /* USE_GL */
