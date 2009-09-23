@@ -324,22 +324,22 @@ static void create_surface(surface_t *surface, Bool depth,
     glGetFloatv(GL_MODELVIEW_MATRIX, surface->projection);
 
     /* FBO */
-    glGenFramebuffersEXT(1, &surface->fbo);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, surface->fbo);
+    glGenFramebuffers(1, &surface->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER_EXT, surface->fbo);
 
     if (depth)
     {
         /* Depth render buffer */
-        glGenRenderbuffersEXT(1, &surface->depth);
-        glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, surface->depth);
-        glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT,
-                                 width, height);
+        glGenRenderbuffers(1, &surface->depth);
+        glBindRenderbuffer(GL_RENDERBUFFER_EXT, surface->depth);
+        glRenderbufferStorage(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT,
+                              width, height);
 
         /* Attach render buffer to FBO */
-        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT,
-                                     GL_DEPTH_ATTACHMENT_EXT,
-                                     GL_RENDERBUFFER_EXT,
-                                     surface->depth);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER_EXT,
+                                  GL_DEPTH_ATTACHMENT_EXT,
+                                  GL_RENDERBUFFER_EXT,
+                                  surface->depth);
     }
     else
     {
@@ -359,24 +359,24 @@ static void create_surface(surface_t *surface, Bool depth,
     glBindTexture(GL_TEXTURE_2D, 0);
 
     /* Attach texture to FBO */
-    glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT,
-                              GL_COLOR_ATTACHMENT0_EXT,
-                              GL_TEXTURE_2D, surface->texture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER_EXT,
+                           GL_COLOR_ATTACHMENT0_EXT,
+                           GL_TEXTURE_2D, surface->texture, 0);
 
 
-    status = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+    status = glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
     if (status != GL_FRAMEBUFFER_COMPLETE_EXT)
     {
         fprintf(stderr, "Couldn't set up framebuffer: 0x%x\n", status);
         exit(1);
     }
 
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0);
 }
 
 static void bind_surface(surface_t *surface)
 {
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, surface->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER_EXT, surface->fbo);
 
     glViewport(surface->x, surface->y,
                surface->width, surface->height);
