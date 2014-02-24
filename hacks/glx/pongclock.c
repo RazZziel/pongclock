@@ -9,6 +9,11 @@
  * implied warranty.
  */
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+
 #define DEF_COLOR      "#00FFCC"
 
 #define DEFAULTS                                \
@@ -25,6 +30,69 @@
 #include <stdio.h>
 #include <math.h>
 #include <time.h>
+
+#define KERNEL_SIZE 25
+#define stringify(s) (#s)
+
+float kernel[KERNEL_SIZE * KERNEL_SIZE] =
+{
+    1,  4,  6,  4, 1,
+    4, 16, 24, 16, 4,
+    6, 24, 36, 24, 6,
+    4, 16, 24, 16, 4,
+    1,  4,  6,  4, 1,
+};
+int p_KernelValue;
+
+
+const char *fragment_program = stringify (
+    const int MaxKernelSize = 25;
+    const int KernelSize = MaxKernelSize;
+    uniform vec2 Offset[MaxKernelSize];
+    uniform vec4 KernelValue[MaxKernelSize];
+    uniform sampler2D BaseImage;
+
+    void main(void)
+    {
+        int i;
+        vec4 sum = vec4(0.0);
+        for ( i=0; i<KernelSize; i++ )
+        {
+            sum += texture2D( BaseImage,
+                              gl_TexCoord[0].st + Offset[i] )
+                * KernelValue[i];
+        }
+        gl_FragColor = /* (1,0,0,1) */sum;
+    }
+    );
+const char *fragment_program_blit = stringify (
+    uniform sampler2D source;
+    uniform vec4 bkgd;
+
+    void main(void)
+    {
+        vec4 t = texture2D(source, gl_TexCoord[0].st);
+        gl_FragColor = /* (0,0,1,1) */t + bkgd;
+    }
+    );
+const char *fragment_program_combine = stringify (
+    uniform sampler2D Pass0;
+    uniform sampler2D Pass1;
+    uniform sampler2D Pass2;
+    uniform sampler2D Pass3;
+    uniform vec4 bkgd;
+
+    void main(void)
+    {
+        vec4 t0 = texture2D(Pass0, gl_TexCoord[0].st);
+        vec4 t1 = texture2D(Pass1, gl_TexCoord[0].st);
+        vec4 t2 = texture2D(Pass2, gl_TexCoord[0].st);
+        vec4 t3 = texture2D(Pass3, gl_TexCoord[0].st);
+        gl_FragColor = /* (0,1,0,1) */t0 + t1 + t2 + t3 + bkgd;
+    }
+    );
+
+int program, program_blit, program_combine;
 
 #ifdef USE_GL /* whole file */
 
@@ -72,7 +140,8 @@ typedef struct {
 
     GLuint textures[10];
     surface_t window_surface;
-    surface_t surfaces[5];
+    surface_t surfaces[5],
+        surfaces1[5];
 
     Bool button_down_p;
 
@@ -530,7 +599,7 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
 
     if (do_fbo)
     {
-        int i;
+        int i, loc;
 
         /* Downsample */
         glEnable(GL_TEXTURE_2D);
@@ -549,16 +618,58 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
             glEnd();
         }
 
+        /* Blurring pass */
+        glUseProgramObjectARB(program);
+
+        loc = glGetUniformLocation(program, "BaseImage");
+        glUniform1i(loc, 0);
+        loc = glGetUniformLocation(program, "KernelValue");
+        glUniform1fv(loc, KERNEL_SIZE * KERNEL_SIZE, kernel);
+        loc = glGetUniformLocation(program, "Offset");
+
+        for (i=0; i<countof(pp->surfaces); i++)
+        {
+            bind_surface(&pp->surfaces1[i]);
+            glUniform1f(loc, 1.0f / pp->surfaces[i].width);
+            glBindTexture(GL_TEXTURE_2D, pp->surfaces[i].texture);
+
+            glBegin(GL_QUADS);
+            {
+                glNormal3i( 0, 0, 1 );
+                /* glTexCoord2i(0, 0); glVertex2i( 0,                     0 ); */
+                /* glTexCoord2i(1, 0); glVertex2i( pp->surfaces[i].width, 0 ); */
+                /* glTexCoord2i(1, 1); glVertex2i( pp->surfaces[i].width, pp->surfaces[i].height ); */
+                /* glTexCoord2i(0, 1); glVertex2i( 0,                     pp->surfaces[i].height ); */
+                glTexCoord2i(0, 0); glVertex2i( -1, -1 );
+                glTexCoord2i(1, 0); glVertex2i(  1, -1 );
+                glTexCoord2i(1, 1); glVertex2i(  1,  1 );
+                glTexCoord2i(0, 1); glVertex2i( -1,  1 );
+            }
+            glEnd();
+
+        }
+        glUseProgramObjectARB(0);
+
         /* Draw to screen */
+/**/
+        glUseProgramObjectARB(program_blit);
+        /* loc = glGetUniformLocation(program_blit, "bkgd"); */
+        /* glUniform4fv(loc, 1, lightblue); */
+        loc = glGetUniformLocation(program_blit, "source");
+        glUniform1i(loc, 0);
+/**/
+
         bind_surface(&pp->window_surface);
 
         glColor4f(1.0f,1.0f,1.0f,1.0f);
 
         glPushMatrix();
+
 #if 1
         for (i=0; i<countof(pp->surfaces); i++)
         {
             glBindTexture(GL_TEXTURE_2D, pp->surfaces[i].texture);
+
             glBegin(GL_QUADS);
             {
                 glNormal3i( 0, 0, 1 );
@@ -568,8 +679,58 @@ ENTRYPOINT void draw_pong(ModeInfo *mi)
                 glTexCoord2i(0, 1); glVertex2i( 0,                     pp->surfaces[i].height );
             }
             glEnd();
-            /* glTranslatef(0, pp->surfaces[0].height + 1, 0); */
         }
+        glPopMatrix();
+        glPushMatrix();
+        for (i=0; i<countof(pp->surfaces); i++)
+        {
+            glBindTexture(GL_TEXTURE_2D, pp->surfaces1[i].texture);
+
+            glBegin(GL_QUADS);
+            {
+                glNormal3i( 0, 0, 1 );
+                glTexCoord2i(0, 0); glVertex2i( 0,                     0 );
+                glTexCoord2i(1, 0); glVertex2i( pp->surfaces[i].width, 0 );
+                glTexCoord2i(1, 1); glVertex2i( pp->surfaces[i].width, pp->surfaces[i].height );
+                glTexCoord2i(0, 1); glVertex2i( 0,                     pp->surfaces[i].height );
+            }
+            glEnd();
+        }
+
+/**/
+        glTranslatef((GLfloat) pp->surfaces1[0].width + 1, 0, 0);
+        glUseProgramObjectARB(program_combine);
+        /* loc = glGetUniformLocation(program_combine, "bkgd"); */
+        /* glUniform4fv(loc, 1, lightblue); */
+
+        for (i=0; i<countof(pp->surfaces1); i++)
+        {
+            char name[] = "Pass#";
+
+            glActiveTexture(GL_TEXTURE0 + i);
+            glBindTexture(GL_TEXTURE_2D, pp->surfaces1[i].texture);
+            glEnable(GL_TEXTURE_2D);
+
+            sprintf(name, "Pass%d", i);
+            loc = glGetUniformLocation(program_combine, name);
+            glUniform1i(loc, i);
+        }
+
+        glBegin(GL_QUADS);
+        glTexCoord2i(0, 0); glVertex2i(0, 0);
+        glTexCoord2i(1, 0); glVertex2i(pp->surfaces[0].width, 0);
+        glTexCoord2i(1, 1); glVertex2i(pp->surfaces[0].width, pp->surfaces[0].height);
+        glTexCoord2i(0, 1); glVertex2i(0, pp->surfaces[0].height);
+        glEnd();
+
+        glUseProgramObjectARB(0);
+        for (i=0; i<countof(pp->surfaces); i++)
+        {
+            glActiveTexture(GL_TEXTURE0 + i);
+            glDisable(GL_TEXTURE_2D);
+        }
+        glActiveTexture(GL_TEXTURE0);
+/**/
 #else
         glBindTexture(GL_TEXTURE_2D, pp->surfaces[0].texture);
         glTranslatef(MI_WIDTH(mi)/2, MI_HEIGHT(mi)/2, 200.0f);
@@ -682,6 +843,14 @@ ENTRYPOINT void reshape_pong(ModeInfo *mi, int width, int height)
                            MI_HEIGHT(mi) >> i,
                            GL_NEAREST);
         }
+        for (i=0; i<countof(pp->surfaces); i++)
+        {
+            create_surface(&pp->surfaces1[i], False,
+                           0, 0,
+                           MI_WIDTH(mi) >> i,
+                           MI_HEIGHT(mi) >> i,
+                           GL_LINEAR);
+        }
     }
 
     /* Recalculate prespective */
@@ -714,6 +883,45 @@ ENTRYPOINT Bool pong_handle_event(ModeInfo *mi, XEvent *event) {
     }
 
     return False;
+}
+
+void init_shader(int *program, const char *program_code);
+void init_shader(int *program, const char *program_code)
+{
+    int status, object;
+
+    *program = glCreateProgramObjectARB();
+    object = glCreateShaderObjectARB(GL_FRAGMENT_SHADER);
+
+    glShaderSourceARB(object, 1, &program_code, 0);
+
+    glCompileShaderARB(object);
+    glAttachObjectARB(*program, object);
+    glDeleteObjectARB(object);
+
+    status = 0;
+    glGetObjectParameterivARB(object, GL_OBJECT_COMPILE_STATUS_ARB, &status);
+    if (status == 0)
+    {
+        char error[4096] = {0};
+        glGetInfoLogARB(object, sizeof(error), NULL, error);
+        fprintf(stderr, "Error compiling shader: %s\n", error);
+        glDeleteObjectARB(*program);
+        *program = 0;
+    }
+
+    glLinkProgramARB(*program);
+
+    status = 0;
+    glGetObjectParameterivARB(*program, GL_OBJECT_LINK_STATUS_ARB, &status);
+    if (status == 0)
+    {
+        char error[4096] = {0};
+        glGetInfoLogARB(*program, sizeof(error), NULL, error);
+        fprintf(stderr, "Error linking shader: %s\n", error);
+        glDeleteObjectARB(*program);
+        *program = 0;
+    }
 }
 
 ENTRYPOINT void init_pong(ModeInfo *mi)
@@ -763,12 +971,30 @@ ENTRYPOINT void init_pong(ModeInfo *mi)
     pp->ball.vx = 0.0f;
     pp->ball.vy = 0.0f;
 
-
-    if (do_fbo && !strstr( (char *) glGetString(GL_EXTENSIONS),
-                           "GL_EXT_framebuffer_object" ))
+    if (do_fbo)
     {
-        fprintf(stderr, "GL_EXT_framebuffer_object not supported, disabling post-processing\n");
-        do_fbo = False;
+        if (!strstr( (char *) glGetString(GL_EXTENSIONS),
+                     "GL_EXT_framebuffer_object" ))
+        {
+            fprintf(stderr, "GL_EXT_framebuffer_object not supported, disabling post-processing\n");
+            do_fbo = False;
+        }
+        else
+        {
+            int i, sum;
+            init_shader(&program, fragment_program);
+            init_shader(&program_blit, fragment_program_blit);
+            init_shader(&program_combine, fragment_program_combine);
+
+            /* p_KernelValue = gl.GetUniformLocation(myProgram, "KernelValue"); */
+            /* Normalize kernel coefficients */
+            sum = 0;
+            for (i=0; i<KERNEL_SIZE * KERNEL_SIZE; i++)
+                sum += kernel[i];
+            /* sum = (kernel[i] > sum) ? kernel[i] : sum; */
+            for (i=0; i<KERNEL_SIZE * KERNEL_SIZE; i++)
+                kernel[i] /= sum;
+        }
     }
 
     reshape_pong( mi, MI_WIDTH(mi), MI_HEIGHT(mi) );
